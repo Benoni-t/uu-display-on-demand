@@ -1,0 +1,14 @@
+# Build products and local installation state / 构建产物和本机状态
+/dist/
+/build/
+*.exe
+*.exe.config
+*.pdb
+*.zip
+*.log
+*.log.previous
+status.json*
+installation*.json
+*.user
+.vs/
+.DS_Store
