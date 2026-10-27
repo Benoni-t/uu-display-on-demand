@@ -14,9 +14,12 @@ $devices=@(Get-PnpDevice -Class Display|Where-Object {$_.FriendlyName -eq 'GameV
 if($devices.Count -ne 1) {throw 'Expected exactly one GameViewer Virtual Display Adapter. No changes made.'}
 $deviceId=$devices[0].InstanceId
 Add-Type -Path (Join-Path $PSScriptRoot 'Native.cs')
+Add-Type -Path (Join-Path $PSScriptRoot 'EncoderActivity.cs')
 [UUDisplayOnDemand.Native]::Configure($deviceId,$ServerExecutable)
-$preflight=[UUDisplayOnDemand.Native]::Probe()
+try {$preflight=[UUDisplayOnDemand.Native]::Probe()} finally {[UUDisplayOnDemand.Native]::ResetProbe()}
 if($preflight.ServerProcessCount -lt 1) {throw 'Start UU remote and verify the GameViewerServer.exe path before installing.'}
+$counter=[UUDisplayOnDemand.GpuEncoderActivity]::new()
+try {Start-Sleep -Seconds 2;if(-not $counter.Read([UUDisplayOnDemand.Native]::GetServerProcessIds()).Ready) {throw 'Windows GPU counters are not ready. No changes made.'}} finally {$counter.Dispose()}
 $beforeEnabled=[UUDisplayOnDemand.Native]::DeviceEnabled()
 New-Item -ItemType Directory -Path $installDir -Force|Out-Null
 $ownerSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -30,7 +33,7 @@ $acl.SetOwner($admins)
 foreach($sid in @($admins,$system)) {$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl',$inherit,'None','Allow'))}
 $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($user,'ReadAndExecute',$inherit,'None','Allow'))
 Set-Acl -LiteralPath $installDir -AclObject $acl
-foreach($name in @('UUDisplayOnDemand.exe','Native.cs','README.md','README.en.md')) {Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $installDir $name)}
+foreach($name in @('UUDisplayOnDemand.exe','Native.cs','EncoderActivity.cs','OnDemandDetector.cs','Program.cs','README.md','README.en.md')) {Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $installDir $name)}
 $config=[xml]'<?xml version="1.0" encoding="utf-8"?><configuration><startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.0" /></startup><appSettings><add key="DeviceInstanceId" value="" /><add key="ServerPath" value="" /></appSettings></configuration>'
 $config.configuration.appSettings.add[0].SetAttribute('value',$deviceId)
 $config.configuration.appSettings.add[1].SetAttribute('value',$ServerExecutable)

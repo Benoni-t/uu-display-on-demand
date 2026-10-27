@@ -72,8 +72,7 @@ namespace UUDisplayOnDemand {
   public static void ResetProbe() {
    if(initialized) {nvmlShutdown(); initialized=false;}
   }
-  public static ProbeResult Probe() {
-   if(!initialized) {Check(nvmlInit_v2(), "nvmlInit"); initialized=true;}
+  public static uint[] GetServerProcessIds() {
    var serverIds = new HashSet<uint>();
    foreach(var process in Process.GetProcessesByName("GameViewerServer")) {
     using(process) {
@@ -82,6 +81,12 @@ namespace UUDisplayOnDemand {
      } catch(InvalidOperationException) { } // Process exited during observation.
     }
    }
+   var result=new uint[serverIds.Count];serverIds.CopyTo(result);return result;
+  }
+  public static ProbeResult Probe() {
+   var serverIds=new HashSet<uint>(GetServerProcessIds());
+   if(serverIds.Count==0) return new ProbeResult();
+   if(!initialized) {Check(nvmlInit_v2(), "nvmlInit"); initialized=true;}
    uint deviceCount; Check(nvmlDeviceGetCount_v2(out deviceCount), "nvmlDeviceGetCount");
    int matches=0, supported=0;
    for(uint i=0;i<deviceCount;i++) {

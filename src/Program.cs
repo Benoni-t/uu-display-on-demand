@@ -21,12 +21,15 @@ namespace UUDisplayOnDemand {
    if(File.Exists(LogFile) && new FileInfo(LogFile).Length>1048576) File.WriteAllText(LogFile,"");
    File.AppendAllText(LogFile,DateTime.UtcNow.ToString("o")+" "+message+Environment.NewLine);
   }
-  private static void State(bool? active,bool? enabled,string health,string error,int sessions) {
-   string json="{\"TimeUtc\":"+Quote(DateTime.UtcNow.ToString("o"))+",\"ProcessId\":"+Process.GetCurrentProcess().Id+
+  private static void State(bool? active,bool? enabled,string health,string error,int sessions,DetectionSnapshot detection) {
+   string json="{\"Version\":\"0.2.0\",\"TimeUtc\":"+Quote(DateTime.UtcNow.ToString("o"))+",\"ProcessId\":"+Process.GetCurrentProcess().Id+
     ",\"RemoteActive\":"+(active.HasValue?active.Value.ToString().ToLowerInvariant():"null")+
     ",\"VirtualDisplayEnabled\":"+(enabled.HasValue?enabled.Value.ToString().ToLowerInvariant():"null")+
     ",\"Health\":"+Quote(health)+",\"Error\":"+Quote(error)+",\"EncoderSessions\":"+sessions+
-    ",\"DisconnectDelaySeconds\":"+DelaySeconds+"}";
+    ",\"DisconnectDelaySeconds\":"+DelaySeconds+
+    ",\"DetectorState\":"+Quote(detection==null?"Stopped":detection.State)+
+    ",\"EncodeActivity\":"+(detection!=null && detection.EncodeActivity?"true":"false")+
+    ",\"NvmlQueries\":"+(detection==null?0:detection.NvmlQueries)+"}";
    string temporary=StatusFile+".new";
    File.WriteAllText(temporary,json);
    if(File.Exists(StatusFile)) File.Replace(temporary,StatusFile,null); else File.Move(temporary,StatusFile);
@@ -50,7 +53,7 @@ namespace UUDisplayOnDemand {
    RunScheduler("/Delete /TN \""+TaskName+"\" /F");
    Native.SetDeviceEnabled(true);
    Log("Automation removed; UU virtual display enabled. UU services and startup settings were not changed.");
-   State(null,true,"Stopped",null,0);
+   State(null,true,"Stopped",null,0,null);
    return 0;
   }
   [STAThread]
@@ -74,38 +77,42 @@ namespace UUDisplayOnDemand {
    var clock=Stopwatch.StartNew();
    double lastActive=0,lastWritten=-10;
    string previousSignal=null;
-   Log("Started. Poll=2s; disconnect grace=20s; target=GameViewer virtual display only.");
-   while(true) {
+   Log("Started v0.2.0. Windows counter gate=2s; active NVML checks=5s; idle NVML queries=0; disconnect grace=20s.");
+   using(var detector=new OnDemandDetector()) {
+    while(true) {
     bool? active=null,enabled=null;
     string health="OK",errorText=null;
     int sessions=0;
+    DetectionSnapshot detection=null;
     try {
      try {
-      var probe=Native.Probe();active=probe.Active;sessions=probe.SessionCount;
-      if(probe.Active) lastActive=clock.Elapsed.TotalSeconds;
+      detection=detector.Poll(clock.Elapsed.TotalSeconds);
+      active=detection.Active;sessions=detection.SessionCount;health=detection.Health;errorText=detection.Error;
+      if(!active.HasValue || active.Value) lastActive=clock.Elapsed.TotalSeconds;
      } catch(Exception error) {
       health="DetectionError";errorText=error.Message;lastActive=clock.Elapsed.TotalSeconds;
       Native.ResetProbe();
      }
      enabled=Native.DeviceEnabled();
      bool desired=enabled.Value;
-     if(!active.HasValue || active.Value) desired=true;
-     else if(clock.Elapsed.TotalSeconds-lastActive>=DelaySeconds) desired=false;
-     // An uncertain detector keeps remote availability by enabling the virtual display.
+     if(active.HasValue && active.Value) desired=true;
+     else if(active.HasValue && clock.Elapsed.TotalSeconds-lastActive>=DelaySeconds) desired=false;
+     // Unknown activity keeps the current device state and never closes a session.
      if(desired!=enabled.Value) {
       Native.SetDeviceEnabled(desired);
-      Log(desired?"Enabled UU virtual display for remote use or detection recovery.":"Disabled idle UU virtual display after the disconnect grace period.");
+      Log(desired?"Enabled UU virtual display for a confirmed remote session.":"Disabled idle UU virtual display after the disconnect grace period.");
       Thread.Sleep(300);
       enabled=Native.DeviceEnabled();
      }
     } catch(Exception error) {health="DeviceError";errorText=error.Message;}
     string signal=active+"/"+enabled+"/"+health;
     if(signal!=previousSignal || clock.Elapsed.TotalSeconds-lastWritten>=10) {
-     State(active,enabled,health,errorText,sessions);
+     State(active,enabled,health,errorText,sessions,detection);
      if(signal!=previousSignal) Log("State "+signal+(errorText==null?"":"; "+errorText));
      previousSignal=signal;lastWritten=clock.Elapsed.TotalSeconds;
     }
     Thread.Sleep(2000);
+    }
    }
   }
  }
